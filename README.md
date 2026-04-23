@@ -62,4 +62,4 @@ Chế độ này khởi một phiên CLI tương tác, hữu ích để thử lu
 
 # link tải file trọng số và data
 
-[text](https://drive.google.com/drive/folders/15ll3g_xB-Jq5PxB3m8zMqupUZPewFFML?usp=sharing)
+[Link here](https://drive.google.com/drive/folders/15ll3g_xB-Jq5PxB3m8zMqupUZPewFFML?usp=sharing)

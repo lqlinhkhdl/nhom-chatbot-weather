@@ -1,0 +1,14 @@
+# WeatherAPI Configuration
+# Get your free API key from https://www.weatherapi.com/
+WEATHERAPI_API_KEY= keycuaban
+
+# Optional: LLM Configuration
+# If running Ollama locally on a different port
+OLLAMA_API_URL=http://localhost:11434
+
+# Optional: FastAPI Configuration
+# Set to 'development' or 'production'
+ENVIRONMENT=development
+
+# Cấu hình Ngrok
+NGROK_AUTH_TOKEN=apicuabn

@@ -24,41 +24,62 @@ logger = logging.getLogger(__name__)
 # ====== NODE FUNCTIONS ======
 
 def node_analyze_intent(state: ConversationState) -> ConversationState:
-    """
-    Node 1: Phân tích ý định từ message cuối cùng
-    Xét ngữ cảnh từ các messages trước đó
-    """
-    logger.info(f"[{state.session_id}]  NODE: analyze_intent")
+    logger.info(f"[{state.session_id}] 🧠 NODE: analyze_intent")
     
-    if not state.messages:
-        state.update_status(ConversationStatus.ERROR)
-        state.error_message = "No messages in state"
-        return state
-    
-    # Lấy message cuối cùng (message của user vừa gửi)
-    last_message = state.messages[-1].content
-    
-    # Get conversation history để context
-    history_text = state.get_conversation_history_text(max_turns=3)
-    
-    # Nếu có history, scope intent classification dựa trên context
-    if history_text and state.target_location:
-        # User đã nói địa điểm rồi, có thể họ đang trả lời câu hỏi trước
-        full_context = f"History:\n{history_text}\n\nPending question: {state.pending_question}\n\nNew input: {last_message}"
-        logger.debug(f"[{state.session_id}] Using context for intent: {full_context[:100]}...")
-    
-    # Phân loại ý định
-    if detect_small_talk(last_message):
-        intent = ConversationIntent.SMALL_TALK
-    else:
-        intent_str = classify_intent(last_message)
-        intent = ConversationIntent(intent_str)
-        
-    state.update_intent(intent)
-    logger.info(f"[{state.session_id}] Intent classified: {intent.value}")
-    
-    return state
+    last_message = state.messages[-1].content.strip()
+    last_message_lower = last_message.lower()
 
+    # 1. TRÍCH XUẤT THÔNG TIN TỪ CÂU MỚI
+    from llm import classify_intent, extract_location, extract_activity_type
+    intent_str = classify_intent(last_message)
+    new_loc = extract_location(last_message)
+    new_act = extract_activity_type(last_message) if intent_str == "activity" else ""
+
+    # ==========================================
+    # 🧠 CHIẾN THUẬT "SIÊU BÁM DÍNH" ĐỊA ĐIỂM
+    # ==========================================
+    # Bước A: Nếu có địa điểm mới -> Cập nhật ngay
+    if new_loc and new_loc.strip() != "":
+        state.update_location(new_loc)
+        logger.info(f"[{state.session_id}] 📍 Ghi nhận địa điểm MỚI: {new_loc}")
+    
+    # Bước B: Nếu không có địa điểm mới -> Ép buộc lấy địa điểm cũ từ State
+    else:
+        if state.target_location:
+            # Gán lại cho loc_str để các bước sau sử dụng
+            new_loc = state.target_location
+            logger.info(f"[{state.session_id}] 🔄 SIÊU BÁM DÍNH: Kế thừa địa điểm cũ '{new_loc}'")
+            
+            # Bước C: Sửa lỗi Intent bị trôi
+            # Nếu người dùng hỏi vắn tắt (VD: "vậy thứ 2 thì sao") 
+            # mà hàm classify_intent trả về unknown, ta dựa vào địa điểm cũ để ép Intent
+            if intent_str in ["unknown", "none"]:
+                import re
+                # Nếu có từ khóa thời gian -> Chắc chắn là đang hỏi tiếp về thời tiết
+                if re.search(r'(thứ|mai|mốt|tuần|ngày|sao|còn)', last_message_lower):
+                    # Kiểm tra xem lịch sử gần nhất là Forecast hay Weather
+                    if state.current_intent == ConversationIntent.FORECAST:
+                        intent_str = "forecast"
+                    else:
+                        intent_str = "weather"
+                    logger.info(f"[{state.session_id}] 🔄 Ép Intent nối tiếp: {intent_str}")
+
+    # 2. BẢO VỆ ENUM (CẦU CHÌ)
+    try:
+        if intent_str in ["none", "null", ""]: intent_str = "unknown"
+        intent = ConversationIntent(intent_str)
+    except ValueError:
+        intent = ConversationIntent.UNKNOWN
+
+    # 3. CẬP NHẬT TRẠNG THÁI CUỐI CÙNG
+    state.update_intent(intent)
+    # Đảm bảo target_location luôn có giá trị nếu đã từng được nhắc đến
+    if new_loc: 
+        state.target_location = new_loc 
+    if new_act: 
+        state.target_activity = new_act
+        
+    return state
 
 def node_extract_location(state: ConversationState) -> ConversationState:
     """
@@ -252,7 +273,7 @@ async def node_fetch_forecast(state: ConversationState) -> ConversationState:
             
         # 4. GỌI API VỚI SỐ NGÀY ĐÃ ĐƯỢC TỐI ƯU
         if lat and lon:
-            forecast_dict = await get_forecast(lat, lon, days=required_days)
+            forecast_dict = await get_forecast(f"{lat},{lon}", days=required_days)
         else:
             forecast_dict = await get_forecast(state.target_location, days=required_days)
             
@@ -284,7 +305,7 @@ async def node_fetch_recommendations(state: ConversationState) -> ConversationSt
     
     try:
         import json
-        with open("D:\Data\Learn 4n2\LLM\chatbot_weather\data\locations.json", "r", encoding="utf-8") as f:
+        with open("D:\Data\Learn 4n2\LLM\chatbot_weather\data\Suggested_locations.json", "r", encoding="utf-8") as f:
             data = json.load(f)
         
         # Fetch weather first để biết điều kiện
@@ -294,14 +315,16 @@ async def node_fetch_recommendations(state: ConversationState) -> ConversationSt
             weather_dict =  await get_weather(lat, lon)
         else:
             weather_dict = await get_weather(state.target_location)
-        
+        current_data = weather_dict.get("current", {})
+        loc_data = weather_dict.get("location", {})
+        loc_name = loc_data.get("name", state.target_location) if isinstance(loc_data, dict) else state.target_location
         # Lưu weather
         state.weather_data = WeatherData(
-            location=weather_dict.get("location", state.target_location),
-            temperature_c=weather_dict.get("temperature_c", 0.0),
-            condition=weather_dict.get("condition", ""),
-            humidity=weather_dict.get("humidity", 0),
-            wind_kph=weather_dict.get("wind_kph", 0.0),
+            location=loc_name,
+            temperature_c=current_data.get("temp_c", 0.0),
+            condition=current_data.get("condition", {}).get("text", ""),
+            humidity=current_data.get("humidity", 0),
+            wind_kph=current_data.get("wind_kph", 0.0),
         )
         
         # Recommend places - filter by province and activity type if available
@@ -333,7 +356,6 @@ async def node_fetch_recommendations(state: ConversationState) -> ConversationSt
         state.update_status(ConversationStatus.ERROR)
     
     return state
-
 
 async def node_generate_response(state: ConversationState) -> ConversationState:
     """
@@ -378,9 +400,12 @@ async def node_generate_response(state: ConversationState) -> ConversationState:
             )
         # Activity: use recommendations
         elif state.current_intent == ConversationIntent.ACTIVITY:
+            # Lấy mảng dữ liệu đã lưu ra, nếu không có thì mặc định là mảng rỗng []
+            rec_data = getattr(state, 'recommendation_data', [])
+            
             response = generate_answer(
                 last_user_message,
-                {"location": state.target_location, "activity": state.target_activity},
+                rec_data, # Truyền MẢNG [] thay vì truyền Dict tí hon
                 location_override=state.target_location
             )
         else:
@@ -489,7 +514,24 @@ async def run_conversation(state: ConversationState) -> ConversationState:
         
         # Cập nhật session vào DB/Memory
         SessionManager.update_session(state.session_id, state)
+        import json
+        print("\n" + "🌟" * 25)
+        print("📦 DỮ LIỆU API TRUYỀN VỀ (RAW JSON):")
         
+        if hasattr(state, 'weather_data') and state.weather_data:
+            try:
+                w_data = state.weather_data.to_dict() if hasattr(state.weather_data, 'to_dict') else state.weather_data.__dict__
+                print(json.dumps({"CURRENT_WEATHER": w_data}, ensure_ascii=False, indent=4))
+            except:
+                print(state.weather_data)
+                
+        elif hasattr(state, 'forecast_data') and state.forecast_data:
+            print(json.dumps({"FORECAST_DATA": state.forecast_data}, ensure_ascii=False, indent=4))
+        else:
+            print("Không có gọi API thời tiết trong lượt này.")
+            
+        print("🌟" * 25 + "\n")
+    
         logger.info(f"[{state.session_id}] ✓ Graph execution completed")
         return state # Trả về state object chuẩn
         

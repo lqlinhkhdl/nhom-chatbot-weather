@@ -1,6 +1,7 @@
 import logging
 import json
 import os
+from datetime import datetime
 from typing import Optional, List
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import HTMLResponse
@@ -181,6 +182,27 @@ async def chat(req: ChatRequest):
         # 6. Update session in memory
         SessionManager.update_session(session_id, final_state)
         
+        # 7. Save raw API data log for debugging
+        import json
+        print("\n" + "🌟" * 25)
+        print(f"🧑 CÂU HỎI: {message_text}")
+        print("📦 DỮ LIỆU API TRUYỀN VỀ:")
+        
+        if hasattr(final_state, 'weather_data') and final_state.weather_data:
+            try:
+                # Ép kiểu an toàn sang Dict
+                w_data = final_state.weather_data.to_dict() if hasattr(final_state.weather_data, 'to_dict') else final_state.weather_data.__dict__
+                print(json.dumps({"CURRENT_WEATHER": w_data}, ensure_ascii=False, indent=4))
+            except:
+                print(final_state.weather_data)
+                
+        elif hasattr(final_state, 'forecast_data') and final_state.forecast_data:
+            print(json.dumps({"FORECAST_DATA": final_state.forecast_data}, ensure_ascii=False, indent=4))
+        else:
+            print("Không có API nào được gọi trong lượt này.")
+            
+        print("🌟" * 25 + "\n")
+
         logger.info(f" Conversation completed and saved")
         return ChatResponse(response=response)
     
@@ -463,3 +485,40 @@ def get_all_sessions():
     except Exception as e:
         logger.error(f"✗ Error retrieving all sessions: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+def save_raw_data_log(user_message: str, state: ConversationState):
+    """Hàm hứng và lưu toàn bộ dữ liệu API thô (JSON) ra file"""
+    try:
+        log_file = "api_raw_data.txt"
+        
+        # Gom các khối dữ liệu API từ State
+        raw_data = {}
+        
+        # 1. Hứng Data Thời tiết hiện tại
+        if hasattr(state, 'weather_data') and state.weather_data:
+            # Chuyển object weather_data thành dạng Dict để dễ ghi file JSON
+            raw_data["CURRENT_WEATHER"] = (
+                state.weather_data.to_dict() if hasattr(state.weather_data, 'to_dict') 
+                else state.weather_data.__dict__ if hasattr(state.weather_data, '__dict__') 
+                else str(state.weather_data)
+            )
+            
+        # 2. Hứng Data Dự báo
+        if hasattr(state, 'forecast_data') and state.forecast_data:
+            raw_data["FORECAST_DATA"] = state.forecast_data
+            
+        # Ghi ra file với định dạng JSON đẹp (indent=4)
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}]\n")
+            f.write(f"🧑 CÂU HỎI: {user_message}\n")
+            f.write("📦 DỮ LIỆU API TRUYỀN VỀ:\n")
+            
+            if raw_data:
+                # In data ra thành format giống y hệt file JSON, thụt lề 4 dấu cách
+                f.write(json.dumps(raw_data, ensure_ascii=False, indent=4))
+            else:
+                f.write("{} (Không gọi API trong lượt chat này)")
+                
+            f.write("\n" + "=" * 80 + "\n")
+            
+    except Exception as e:
+        logger.error(f"Lỗi khi ghi file api_raw_data.txt: {e}")

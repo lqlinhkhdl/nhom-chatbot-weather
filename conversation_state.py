@@ -86,7 +86,7 @@ class ConversationState:
     # Metadata
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
     updated_at: str = field(default_factory=lambda: datetime.now().isoformat())
-    
+    recommendation_data: list = None  # Dữ liệu gợi ý đã fetch (nếu có)
     # History of intents (để theo dõi conversational flow)
     intent_history: List[str] = field(default_factory=list)
     

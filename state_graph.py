@@ -343,11 +343,11 @@ async def node_fetch_recommendations(state: ConversationState) -> ConversationSt
                 province_filter=state.target_location
             )
             logger.info(f"[{state.session_id}] No activity filter, recommending places in {state.target_location}")
-        
+        state.recommendation_data = recommendations
+
         # Store recommendations count in state
         activity_desc = f" ({state.target_activity})" if state.target_activity else ""
         state.target_activity = f"Đã recommend {len(recommendations)} places{activity_desc}"
-        
         logger.info(f"[{state.session_id}] Fetched {len(recommendations)} recommendations")
         
     except Exception as e:
@@ -516,17 +516,47 @@ async def run_conversation(state: ConversationState) -> ConversationState:
         SessionManager.update_session(state.session_id, state)
         import json
         print("\n" + "🌟" * 25)
-        print("📦 DỮ LIỆU API TRUYỀN VỀ (RAW JSON):")
-        
-        if hasattr(state, 'weather_data') and state.weather_data:
-            try:
-                w_data = state.weather_data.to_dict() if hasattr(state.weather_data, 'to_dict') else state.weather_data.__dict__
-                print(json.dumps({"CURRENT_WEATHER": w_data}, ensure_ascii=False, indent=4))
-            except:
-                print(state.weather_data)
+        print("📦 DỮ LIỆU TỪ HỆ THỐNG TRUYỀN VỀ (RAW JSON):")
+
+        # 1. In dữ liệu DỰ BÁO
+        if state.current_intent == ConversationIntent.FORECAST:
+            if hasattr(state, 'forecast_data') and state.forecast_data:
+                print(json.dumps({"FORECAST_DATA": state.forecast_data}, ensure_ascii=False, indent=4))
+            else:
+                print("Lỗi: Không có dữ liệu Forecast tải về.")
                 
-        elif hasattr(state, 'forecast_data') and state.forecast_data:
-            print(json.dumps({"FORECAST_DATA": state.forecast_data}, ensure_ascii=False, indent=4))
+        # 2. In dữ liệu THỜI TIẾT HIỆN TẠI
+        elif state.current_intent == ConversationIntent.WEATHER:
+            if hasattr(state, 'weather_data') and state.weather_data:
+                try:
+                    w_data = state.weather_data.to_dict() if hasattr(state.weather_data, 'to_dict') else state.weather_data.__dict__
+                    print(json.dumps({"CURRENT_WEATHER": w_data}, ensure_ascii=False, indent=4))
+                except:
+                    print(state.weather_data)
+            else:
+                print("Lỗi: Không có dữ liệu Weather tải về.")
+                
+        # ==========================================
+        # 3. THÊM MỚI: IN DỮ LIỆU GỢI Ý ĐỊA ĐIỂM (ACTIVITY)
+        # ==========================================
+        elif state.current_intent == ConversationIntent.ACTIVITY:
+            # In thời tiết hiện tại để biết tại sao lại lọc ra danh sách này
+            if hasattr(state, 'weather_data') and state.weather_data:
+                try:
+                    w_data = state.weather_data.to_dict() if hasattr(state.weather_data, 'to_dict') else state.weather_data.__dict__
+                    print(json.dumps({"CURRENT_WEATHER": w_data}, ensure_ascii=False, indent=4))
+                except:
+                    pass
+            
+            # In Mảng danh sách địa điểm đã lọc được
+            rec_data = getattr(state, 'recommendation_data', [])
+            if rec_data:
+                print(f"\n✅ TÌM THẤY {len(rec_data)} ĐỊA ĐIỂM:")
+                # Chỉ in tối đa 3-5 địa điểm đầu tiên để tránh tràn màn hình Terminal
+                print(json.dumps({"RECOMMENDATIONS": rec_data}, ensure_ascii=False, indent=4))
+            else:
+                print("\n❌ DANH SÁCH RỖNG: Không có địa điểm nào lọt qua bộ lọc (có thể do trời mưa hoặc không khớp từ khóa).")
+                
         else:
             print("Không có gọi API thời tiết trong lượt này.")
             
